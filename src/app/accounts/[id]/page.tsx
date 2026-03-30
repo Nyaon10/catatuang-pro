@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Title, Group, Button, Paper, Text, Table, Badge, Center, Loader, Modal, Stack, Alert, NumberInput } from '@mantine/core';
+import { Title, Group, Button, Paper, Text, Table, Badge, Center, Loader, Modal, Stack, Alert, NumberInput, Image as MantineImage, ActionIcon, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconBuildingBank, IconCoin, IconReceiptTax, IconInfoCircle } from '@tabler/icons-react';
+import { IconBuildingBank, IconCoin, IconInfoCircle, IconPhoto } from '@tabler/icons-react';
 
 export default function AccountDetailPage() {
   const params = useParams();
@@ -17,10 +17,16 @@ export default function AccountDetailPage() {
   const [accountTransactions, setAccountTransactions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // State Modals
   const [warningOpened, { open: openWarning, close: closeWarning }] = useDisclosure(false);
   const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
   const [taxModalOpened, { open: openTaxModal, close: closeTaxModal }] = useDisclosure(false);
+  
+  // STATE BARU UNTUK PREVIEW GAMBAR
+  const [imageModalOpened, { open: openImageModal, close: closeImageModal }] = useDisclosure(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  // State Input Pajak Manual
   const [taxAmount, setTaxAmount] = useState<number | ''>('');
 
   useEffect(() => {
@@ -125,9 +131,6 @@ export default function AccountDetailPage() {
     window.location.reload(); 
   };
 
-  // =========================================================
-  // MESIN PERHITUNGAN DENGAN AUTO GAP-CLOSING
-  // =========================================================
   const calculateInterest = () => {
     if (!account || !bankDetails) return 0;
     
@@ -141,7 +144,6 @@ export default function AccountDetailPage() {
         const tier = sortedTiers[i];
         const min = Number(tier.minBalance);
         
-        // Cerdas menutup celah: Max tier ini otomatis menjadi Min dari tier selanjutnya
         let max;
         if (i + 1 < sortedTiers.length) {
           max = Number(sortedTiers[i + 1].minBalance);
@@ -179,10 +181,14 @@ export default function AccountDetailPage() {
 
       return {
         id: trx.id, date: trx.date, desc: `${mainDesc} — [${detailDesc}]`,
-        type: isIncoming ? 'INCOME' : 'EXPENSE', amount: trx.amount
+        type: isIncoming ? 'INCOME' : 'EXPENSE', amount: trx.amount,
+        image: trx.image // Pastikan gambar diambil jika ada
       };
     } else {
-      return { id: trx.id, date: trx.date, desc: trx.desc, type: trx.type, amount: trx.amount };
+      return { 
+        id: trx.id, date: trx.date, desc: trx.desc, type: trx.type, amount: trx.amount,
+        image: trx.image // Pastikan gambar diambil jika ada
+      };
     }
   });
 
@@ -260,6 +266,7 @@ export default function AccountDetailPage() {
                 <Table.Th>Keterangan</Table.Th>
                 <Table.Th>Tipe</Table.Th>
                 <Table.Th style={{ textAlign: 'right' }}>Jumlah</Table.Th>
+                <Table.Th style={{ textAlign: 'center' }}>Bukti</Table.Th> {/* KOLOM BARU */}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -285,6 +292,27 @@ export default function AccountDetailPage() {
                       {trx.type === 'INCOME' ? '+' : '-'} Rp {trx.amount.toLocaleString('id-ID')}
                     </Text>
                   </Table.Td>
+                  <Table.Td style={{ textAlign: 'center' }}>
+                    {/* TOMBOL LIHAT GAMBAR */}
+                    {trx.image ? (
+                      <Tooltip label="Lihat Bukti Foto">
+                        <Button 
+                          variant="light" 
+                          size="xs" 
+                          color="blue"
+                          leftSection={<IconPhoto size={14} />}
+                          onClick={() => {
+                            setSelectedImage(trx.image);
+                            openImageModal();
+                          }}
+                        >
+                          Lihat
+                        </Button>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">-</Text>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -293,6 +321,15 @@ export default function AccountDetailPage() {
           <Text c="dimmed" fs="italic" ta="center" py="lg">Belum ada transaksi untuk akun ini.</Text>
         )}
       </Paper>
+
+      {/* MODAL UNTUK MELIHAT GAMBAR BUKTI */}
+      <Modal opened={imageModalOpened} onClose={closeImageModal} title={<Text fw={700}>Bukti Transaksi</Text>} centered size="lg">
+        {selectedImage ? (
+          <MantineImage src={selectedImage} alt="Bukti Transaksi" fit="contain" radius="md" />
+        ) : (
+          <Text c="dimmed" ta="center">Gambar tidak tersedia</Text>
+        )}
+      </Modal>
 
       <Modal opened={taxModalOpened} onClose={closeTaxModal} title={<Text fw={700} size="lg">Catat Potongan Pajak Bunga</Text>} centered>
         <Stack>

@@ -3,21 +3,25 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Title, Paper, Button, TextInput, Select, NumberInput, Stack, Group, Text, Alert } from '@mantine/core';
+import { Title, Paper, Button, TextInput, Select, NumberInput, Stack, Group, Text, Alert, FileInput, Image as MantineImage } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { IconInfoCircle } from '@tabler/icons-react';
+import { IconInfoCircle, IconUpload } from '@tabler/icons-react';
 
 export default function AddAccountPage() {
   const router = useRouter();
   
   // State Data Master
   const [ownerOptions, setOwnerOptions] = useState<{value: string, label: string}[]>([]);
-  const [bankData, setBankData] = useState<any[]>([]); // Menyimpan seluruh data bank
+  const [bankData, setBankData] = useState<any[]>([]); 
   
   const [rawOwners, setRawOwners] = useState<string[]>([]);
-  const [rawBanks, setRawBanks] = useState<string[]>([]); // Untuk validasi gabungan nama bank
+  const [rawBanks, setRawBanks] = useState<string[]>([]); 
   
   const [isMasterLoaded, setIsMasterLoaded] = useState(false);
+
+  // STATE BARU: Menyimpan Gambar
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
 
   useEffect(() => {
     // 1. Load Master Pemilik
@@ -43,8 +47,8 @@ export default function AddAccountPage() {
     initialValues: {
       name: '',
       owner: '',
-      baseBankName: '', // BARU: Menyimpan Bank Induk sementara
-      productName: '',  // BARU: Menyimpan Tipe Kantong sementara
+      baseBankName: '', 
+      productName: '',  
       category: '',
       balance: 0,
       target: 0,
@@ -71,6 +75,20 @@ export default function AddAccountPage() {
     },
   });
 
+  // FUNGSI BARU: Konversi file gambar menjadi teks (Base64)
+  const handleImageChange = (file: File | null) => {
+    setImageFile(file);
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageBase64(reader.result as string); // Simpan hasil konversi
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setImageBase64(null);
+    }
+  };
+
   const handleSubmit = (values: typeof form.values) => {
     // Gabungkan nama bank seperti format di Master Data
     const combinedBankName = `${values.baseBankName} - ${values.productName}`;
@@ -96,10 +114,11 @@ export default function AddAccountPage() {
       id: newAccountId,
       name: values.name.trim(),
       owner: values.owner,
-      bankName: combinedBankName, // Simpan sebagai gabungan agar kompatibel dengan tabel
+      bankName: combinedBankName,
       category: values.category,
       balance: values.balance,
       target: finalTarget,
+      image: imageBase64, // Tambahkan gambar ke data akun (Opsional)
     };
 
     const updatedAccounts = [...existingAccounts, newAccount];
@@ -119,7 +138,8 @@ export default function AddAccountPage() {
         date: today,
         desc: finalDesc,
         amount: values.balance,
-        type: 'INCOME'
+        type: 'INCOME',
+        image: imageBase64, // Tambahkan gambar ke riwayat transaksi juga
       };
 
       const updatedTransactions = [...existingTransactions, initialTransaction];
@@ -132,12 +152,10 @@ export default function AddAccountPage() {
   // ==========================================
   // LOGIKA DROPDOWN DINAMIS UNTUK BANK
   // ==========================================
-  // 1. Ambil daftar Bank Induk unik (tanpa duplikat)
   const baseBankOptions = Array.from(
     new Set(bankData.map(b => b.baseBankName || b.name.split(' - ')[0]))
   ).map(name => ({ value: name, label: name }));
 
-  // 2. Ambil daftar Produk hanya dari Bank Induk yang dipilih pengguna
   const productOptions = form.values.baseBankName
     ? bankData
         .filter(b => (b.baseBankName || b.name.split(' - ')[0]) === form.values.baseBankName)
@@ -149,7 +167,6 @@ export default function AddAccountPage() {
 
   const showTargetInput = ['Hobi', 'Tujuan'].includes(form.values.category);
   
-  // Cek apakah ada master data yang belum diisi
   const isOwnerEmpty = isMasterLoaded && ownerOptions.length === 0;
   const isBankEmpty = isMasterLoaded && bankData.length === 0;
   const isMasterIncomplete = isOwnerEmpty || isBankEmpty;
@@ -194,7 +211,6 @@ export default function AddAccountPage() {
               {...form.getInputProps('owner')}
             />
 
-            {/* DROPDOWN DINAMIS BANK & KANTONG */}
             <Group grow align="flex-start">
               <Select
                 label="Institusi Bank Induk"
@@ -206,7 +222,6 @@ export default function AddAccountPage() {
                 nothingFoundMessage="Bank tidak ditemukan"
                 {...form.getInputProps('baseBankName')}
                 onChange={(val) => {
-                  // Jika Bank Induk diubah, reset pilihan Tipe Kantong
                   form.setFieldValue('baseBankName', val || '');
                   form.setFieldValue('productName', '');
                 }}
@@ -265,10 +280,33 @@ export default function AddAccountPage() {
                 {...form.getInputProps('target')} 
               />
             )}
+
+            {/* INPUT GAMBAR BARU */}
+            <FileInput
+              label="Bukti / Foto (Opsional)"
+              description="Upload foto struk atau tangkapan layar (Disarankan di bawah 2MB)"
+              placeholder="Pilih file gambar..."
+              accept="image/png,image/jpeg,image/jpg"
+              leftSection={<IconUpload size={16} />}
+              value={imageFile}
+              onChange={handleImageChange}
+              clearable
+            />
+
+            {/* PREVIEW GAMBAR */}
+            {imageBase64 && (
+              <MantineImage 
+                radius="md" 
+                src={imageBase64} 
+                alt="Preview Bukti" 
+                mt="sm" 
+                mah={200} 
+                fit="contain" 
+              />
+            )}
             
             <Group justify="flex-end" mt="md">
               <Button variant="default" onClick={() => router.push('/accounts')}>Batal</Button>
-              {/* Tombol Simpan akan terkunci jika belum ada Data Master */}
               <Button type="submit" color="blue" disabled={isMasterIncomplete}>Simpan Akun</Button>
             </Group>
           </Stack>

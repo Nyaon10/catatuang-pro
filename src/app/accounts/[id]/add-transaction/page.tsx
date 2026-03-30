@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Title, Paper, Button, TextInput, Select, NumberInput, Stack, Group, Text, Center, Loader } from '@mantine/core';
+import { Title, Paper, Button, TextInput, Select, NumberInput, Stack, Group, Text, Center, Loader, FileInput, Image as MantineImage } from '@mantine/core';
 import { useForm } from '@mantine/form';
+import { IconUpload } from '@tabler/icons-react';
 
 export default function AddTransactionPage() {
   const params = useParams();
@@ -13,6 +14,10 @@ export default function AddTransactionPage() {
 
   const [account, setAccount] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // STATE BARU UNTUK GAMBAR
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
 
   const today = new Date().toLocaleDateString('en-CA');
 
@@ -49,10 +54,21 @@ export default function AddTransactionPage() {
     },
   });
 
-  const handleSubmit = (values: typeof form.values) => {
-    // Karena proteksi sudah ditangani oleh fungsi 'validate' di atas, 
-    // kita tidak perlu lagi mengecek manual di sini.
+  // FUNGSI KONVERSI GAMBAR (Base64)
+  const handleImageChange = (file: File | null) => {
+    setImageFile(file);
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageBase64(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setImageBase64(null);
+    }
+  };
 
+  const handleSubmit = (values: typeof form.values) => {
     // 1. Kalkulasi saldo baru
     const newBalance = values.type === 'INCOME' 
       ? account.balance + values.amount 
@@ -68,7 +84,7 @@ export default function AddTransactionPage() {
       localStorage.setItem('finance_accounts_v3', JSON.stringify(updatedAccounts));
     }
 
-    // 3. Simpan Transaksi
+    // 3. Simpan Transaksi (Ditambahkan properti image)
     const newTrx = {
       id: Date.now(),
       accountId: accountId,
@@ -76,6 +92,7 @@ export default function AddTransactionPage() {
       desc: values.desc.trim(),
       amount: values.amount,
       type: values.type,
+      image: imageBase64, // Menyimpan bukti gambar
     };
 
     const savedTransactions = localStorage.getItem('finance_transactions_v2');
@@ -132,7 +149,6 @@ export default function AddTransactionPage() {
               placeholder="0"
               hideControls
               min={0}
-              // Tambahkan batas maksimal (max) pada properti input HANYA jika tipe adalah pengeluaran
               max={form.values.type === 'EXPENSE' ? account.balance : undefined}
               required
               {...form.getInputProps('amount')}
@@ -152,6 +168,30 @@ export default function AddTransactionPage() {
               required
               {...form.getInputProps('date')}
             />
+
+            {/* FITUR UPLOAD GAMBAR */}
+            <FileInput
+              label="Bukti / Foto (Opsional)"
+              description="Upload struk transaksi atau nota pembayaran (Saran: Maks 2MB)"
+              placeholder="Pilih file gambar..."
+              accept="image/png,image/jpeg,image/jpg"
+              leftSection={<IconUpload size={16} />}
+              value={imageFile}
+              onChange={handleImageChange}
+              clearable
+            />
+
+            {/* PREVIEW GAMBAR */}
+            {imageBase64 && (
+              <MantineImage 
+                radius="md" 
+                src={imageBase64} 
+                alt="Preview Bukti" 
+                mt="sm" 
+                mah={200} 
+                fit="contain" 
+              />
+            )}
             
             <Group justify="flex-end" mt="md">
               <Button type="submit" color="green">Simpan Transaksi</Button>
