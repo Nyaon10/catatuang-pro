@@ -10,13 +10,125 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const savedAccounts = localStorage.getItem('finance_accounts_v3');
-    if (savedAccounts) setAccounts(JSON.parse(savedAccounts));
+    // ========================================================
+    // MESIN OTOMATISASI BUNGA PROGRESIF & PAJAK (AUTO-SYNC)
+    // Berjalan sebelum data di-set ke state agar grafik langsung update
+    // ========================================================
+    const runAutoSyncAndLoadData = () => {
+      const today = new Date();
+      
+      const rawAccounts = localStorage.getItem('finance_accounts_v3');
+      const rawBanks = localStorage.getItem('finance_master_banks');
+      const rawTrx = localStorage.getItem('finance_transactions_v2');
 
-    const savedTransactions = localStorage.getItem('finance_transactions_v2');
-    if (savedTransactions) setTransactions(JSON.parse(savedTransactions));
+      let currentAccounts = rawAccounts ? JSON.parse(rawAccounts) : [];
+      const masterBanks = rawBanks ? JSON.parse(rawBanks) : [];
+      let currentTrx = rawTrx ? JSON.parse(rawTrx) : [];
 
-    setIsLoading(false);
+      // Hanya jalankan logika bunga jika hari ini >= tanggal 28 dan ada data
+      if (today.getDate() >= 28 && currentAccounts.length > 0 && masterBanks.length > 0) {
+        const currentYear = today.getFullYear();
+        const currentMonth = today.getMonth();
+        const currentMonthKey = `${currentYear}-${currentMonth + 1}`; 
+        const currentMonthPadded = String(currentMonth + 1).padStart(2, '0');
+        const forcedTransactionDate = `${currentYear}-${currentMonthPadded}-28`;
+        const monthYearStr = `${currentMonthPadded}/${currentYear}`; 
+        const payoutCutoffThisMonth = new Date(currentYear, currentMonth, 28, 23, 59, 59).getTime();
+
+        let isUpdated = false;
+
+        currentAccounts.forEach((acc: any, index: number) => {
+          if (acc.lastInterestMonth === currentMonthKey) return; 
+
+          if (acc.id > 10000 && acc.id > payoutCutoffThisMonth) {
+            currentAccounts[index].lastInterestMonth = currentMonthKey; 
+            isUpdated = true; 
+            return;
+          }
+
+          const bank = masterBanks.find((b: any) => b.name === acc.bankName);
+          if (!bank || acc.balance <= 0) return;
+
+          let calculatedInterest = 0;
+          if (bank.tiers && bank.tiers.length > 0) {
+            const sortedTiers = [...bank.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
+            for (let i = 0; i < sortedTiers.length; i++) {
+              const tier = sortedTiers[i];
+              const min = Number(tier.minBalance);
+              const max = tier.maxBalance === '' ? Infinity : Number(tier.maxBalance);
+              const rate = Number(tier.rate) / 100;
+              const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
+
+              if (acc.balance > min) {
+                const chunk = Math.min(acc.balance, max) - min;
+                calculatedInterest += chunk * effectiveRate;
+              }
+            }
+          } else {
+            const rate = (bank.interestRate || 0) / 100;
+            const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
+            calculatedInterest = acc.balance * effectiveRate;
+          }
+
+          const gross = Math.floor(calculatedInterest);
+          if (gross > 0) {
+            const taxRate = bank.taxRate ?? 20; 
+            const taxAmount = Math.floor(gross * (taxRate / 100));
+            const net = gross - taxAmount;
+
+            currentAccounts[index].balance += net; 
+            currentAccounts[index].lastInterestMonth = currentMonthKey; 
+
+            const trxBaseId = Date.now() + Math.random(); 
+
+            // 1. Pemasukan Bunga Kotor
+            currentTrx.push({
+              id: trxBaseId,
+              date: forcedTransactionDate,
+              desc: `Bunga Bulanan ${monthYearStr} - ${bank.name} (Otomatis)`,
+              amount: gross,
+              isDoubleEntry: true,
+              debitId: acc.id, 
+              debitName: acc.name,
+              debitOwner: acc.owner,
+              creditId: 'MANUAL',
+              creditName: 'Pendapatan Bunga (Sistem)',
+              creditOwner: 'Global/Eksternal'
+            });
+
+            // 2. Pengeluaran Pajak Bunga
+            currentTrx.push({
+              id: trxBaseId + 1,
+              date: forcedTransactionDate,
+              desc: `Pajak Bunga ${monthYearStr} - ${bank.name} (Otomatis)`,
+              amount: taxAmount,
+              isDoubleEntry: true,
+              debitId: 'MANUAL',
+              debitName: 'Beban Pajak Bunga (Sistem)',
+              debitOwner: 'Global/Eksternal',
+              creditId: acc.id, 
+              creditName: acc.name,
+              creditOwner: acc.owner
+            });
+
+            isUpdated = true;
+          }
+        });
+
+        // Simpan hanya jika ada data baru yang diproses
+        if (isUpdated) {
+          localStorage.setItem('finance_accounts_v3', JSON.stringify(currentAccounts));
+          localStorage.setItem('finance_transactions_v2', JSON.stringify(currentTrx));
+        }
+      }
+
+      // Load data ke UI State
+      setAccounts(currentAccounts);
+      setTransactions(currentTrx);
+      setIsLoading(false);
+    };
+
+    runAutoSyncAndLoadData();
   }, []);
 
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];

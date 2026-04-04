@@ -13,7 +13,6 @@ interface Owner {
   phone: string;
 }
 
-// STRUKTUR BARU: Menyimpan data setiap baris tingkatan bunga
 interface InterestTier {
   id: string;
   minBalance: number | '';
@@ -21,15 +20,15 @@ interface InterestTier {
   rate: number | '';
 }
 
-// PERBAIKAN: Menambahkan "?" (opsional) agar data bank lama tidak menyebabkan Error
 interface Bank {
   id: string;
   name: string;
   baseBankName?: string; 
   productName?: string;
   interestPeriod?: 'YEAR' | 'MONTH';
-  interestRate?: number; // <--- KUNCI PERBAIKAN: Untuk kompatibilitas data lama
+  interestRate?: number; 
   tiers?: InterestTier[];
+  taxRate?: number; // <--- PERBAIKAN: Tambahan kolom pajak
 }
 
 export default function MastersPage() {
@@ -73,11 +72,14 @@ export default function MastersPage() {
   const [newProductName, setNewProductName] = useState('');
   const [newBankInterestPeriod, setNewBankInterestPeriod] = useState<string | null>('YEAR');
   
+  // STATE BARU: Pajak Bunga (Default 20%)
+  const [newBankTaxRate, setNewBankTaxRate] = useState<number | ''>(20);
+  
   const [bankTiers, setBankTiers] = useState<InterestTier[]>([
     { id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: 0 }
   ]);
 
-  const [bankErrors, setBankErrors] = useState({ baseName: '', productName: '', interestPeriod: '', tiers: '' });
+  const [bankErrors, setBankErrors] = useState({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
 
   useEffect(() => {
     const savedOwners = localStorage.getItem('finance_master_owners');
@@ -93,7 +95,7 @@ export default function MastersPage() {
   }, []);
 
   useEffect(() => { setOwnerErrors({ name: '', email: '', phone: '' }); }, [newOwnerName, newOwnerEmail, newOwnerPhone]);
-  useEffect(() => { setBankErrors({ baseName: '', productName: '', interestPeriod: '', tiers: '' }); }, [newBaseBankName, newProductName, newBankInterestPeriod, bankTiers]);
+  useEffect(() => { setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' }); }, [newBaseBankName, newProductName, newBankInterestPeriod, newBankTaxRate, bankTiers]);
 
   // ==========================================
   // FUNGSI CRUD MASTER PEMILIK
@@ -200,8 +202,9 @@ export default function MastersPage() {
     setNewBaseBankName('');
     setNewProductName('');
     setNewBankInterestPeriod('YEAR');
+    setNewBankTaxRate(20); // Reset ke 20%
     setBankTiers([{ id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: 0 }]); 
-    setBankErrors({ baseName: '', productName: '', interestPeriod: '', tiers: '' });
+    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
     openBank();
   };
 
@@ -211,6 +214,7 @@ export default function MastersPage() {
     setNewBaseBankName(bank.baseBankName || bank.name.split(' - ')[0]);
     setNewProductName(bank.productName || bank.name.split(' - ')[1] || 'Standar');
     setNewBankInterestPeriod(bank.interestPeriod || 'YEAR');
+    setNewBankTaxRate(bank.taxRate ?? 20); // Load pajak sebelumnya, jika tidak ada default 20%
     
     if (bank.tiers && bank.tiers.length > 0) {
       setBankTiers(bank.tiers);
@@ -218,7 +222,7 @@ export default function MastersPage() {
       setBankTiers([{ id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: bank.interestRate || 0 }]);
     }
     
-    setBankErrors({ baseName: '', productName: '', interestPeriod: '', tiers: '' });
+    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
     openBank();
   };
 
@@ -239,7 +243,7 @@ export default function MastersPage() {
     const trimmedBaseName = newBaseBankName.trim();
     const trimmedProductName = newProductName.trim();
     const combinedName = `${trimmedBaseName} - ${trimmedProductName}`;
-    const errors = { baseName: '', productName: '', interestPeriod: '', tiers: '' };
+    const errors = { baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' };
     let hasError = false;
 
     if (!trimmedBaseName) { errors.baseName = 'Nama Bank Induk wajib diisi!'; hasError = true; }
@@ -248,6 +252,7 @@ export default function MastersPage() {
     const isDuplicate = banks.some(b => b.name.toLowerCase() === combinedName.toLowerCase() && b.id !== editingBankId);
     if (isDuplicate) { errors.productName = `Produk "${combinedName}" sudah terdaftar!`; hasError = true; }
     if (!newBankInterestPeriod) { errors.interestPeriod = 'Pilih periode bunga!'; hasError = true; }
+    if (newBankTaxRate === '') { errors.taxRate = 'Pajak wajib diisi (isi 0 jika bebas pajak)'; hasError = true; }
 
     const hasInvalidTier = bankTiers.some(t => t.rate === '' || t.minBalance === '');
     if (hasInvalidTier) {
@@ -269,6 +274,7 @@ export default function MastersPage() {
               ...bank, 
               name: combinedName, baseBankName: trimmedBaseName, productName: trimmedProductName,
               interestPeriod: newBankInterestPeriod as 'YEAR' | 'MONTH',
+              taxRate: newBankTaxRate as number,
               tiers: bankTiers,
               interestRate: bankTiers[0].rate as number 
             }
@@ -288,6 +294,7 @@ export default function MastersPage() {
       const newBank: Bank = { 
         id: Date.now().toString(), name: combinedName, baseBankName: trimmedBaseName, productName: trimmedProductName,
         interestPeriod: newBankInterestPeriod as 'YEAR' | 'MONTH',
+        taxRate: newBankTaxRate as number,
         tiers: bankTiers, interestRate: bankTiers[0].rate as number
       };
       updatedBanks = [...banks, newBank];
@@ -385,7 +392,7 @@ export default function MastersPage() {
             </Group>
 
             <MantineAlert icon={<IconInfoCircle size="1rem" />} color="blue" variant="light" mb="md" style={{ border: 'none' }}>
-              <Text size="sm">Sekarang Anda bisa menambahkan <b>Bunga Progresif (Sistem Tier)</b> untuk setiap produk bank seperti Flexi Saver, Deposito, atau Tabungan Bertingkat.</Text>
+              <Text size="sm">Sekarang Anda bisa menambahkan <b>Bunga Progresif (Sistem Tier)</b> beserta <b>Pajak Bunga</b> untuk akurasi perhitungan.</Text>
             </MantineAlert>
             
             <div style={{ overflowX: 'auto' }}>
@@ -394,7 +401,7 @@ export default function MastersPage() {
                   <Table.Tr>
                     <Table.Th>Institusi Bank Induk</Table.Th>
                     <Table.Th>Tipe Rekening / Kantong</Table.Th>
-                    <Table.Th>Struktur Bunga Berjenjang (Tier)</Table.Th>
+                    <Table.Th>Struktur Bunga Berjenjang & Pajak</Table.Th>
                     <Table.Th w={120} style={{ textAlign: 'center' }}>Aksi</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -415,7 +422,10 @@ export default function MastersPage() {
                         <Table.Td>
                           {isMultiTier && bank.tiers ? (
                             <Stack gap={4}>
-                              <Text size="xs" fw={700} c="blue">{bank.tiers.length} Tingkat Bunga ({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'}):</Text>
+                              <Group gap="xs">
+                                <Text size="xs" fw={700} c="blue">{bank.tiers.length} Tingkat Bunga ({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'}):</Text>
+                                <Badge color="red" variant="light" size="xs">Pajak: {bank.taxRate ?? 20}%</Badge>
+                              </Group>
                               {bank.tiers.map((t, i) => (
                                 <Text key={i} size="xs" c="dimmed">
                                   • &ge; Rp{Number(t.minBalance).toLocaleString('id-ID')} {t.maxBalance !== '' ? ` s/d Rp${Number(t.maxBalance).toLocaleString('id-ID')}` : ' (Seterusnya)'} <Text component="span" c={isDark ? 'white' : 'black'} fw={600}>→ {t.rate}%</Text>
@@ -423,9 +433,12 @@ export default function MastersPage() {
                               ))}
                             </Stack>
                           ) : (
-                            <Text size="sm" fw={600}>
-                              {bank.tiers ? bank.tiers[0]?.rate : bank.interestRate}% <Text component="span" size="xs" c="dimmed" fw={500}>({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'})</Text>
-                            </Text>
+                            <Group gap="xs">
+                              <Text size="sm" fw={600}>
+                                {bank.tiers ? bank.tiers[0]?.rate : bank.interestRate}% <Text component="span" size="xs" c="dimmed" fw={500}>({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'})</Text>
+                              </Text>
+                              <Badge color="red" variant="light" size="xs">Pajak: {bank.taxRate ?? 20}%</Badge>
+                            </Group>
                           )}
                         </Table.Td>
                         <Table.Td style={{ textAlign: 'center' }}>
@@ -489,7 +502,18 @@ export default function MastersPage() {
             <TextInput label="Tipe Rekening / Produk" placeholder="Contoh: Flexi Saver" value={newProductName} onChange={(e) => setNewProductName(e.currentTarget.value)} withAsterisk error={bankErrors.productName} />
           </Group>
           
-          <Select label="Hitungan Bunga Berlaku" data={[{ value: 'YEAR', label: 'Per Tahun (p.a.)' }, { value: 'MONTH', label: 'Per Bulan (p.m.)' }]} value={newBankInterestPeriod} onChange={setNewBankInterestPeriod} withAsterisk error={bankErrors.interestPeriod} />
+          <Group grow align="flex-start">
+            <Select label="Hitungan Bunga Berlaku" data={[{ value: 'YEAR', label: 'Per Tahun (p.a.)' }, { value: 'MONTH', label: 'Per Bulan (p.m.)' }]} value={newBankInterestPeriod} onChange={setNewBankInterestPeriod} withAsterisk error={bankErrors.interestPeriod} />
+            <NumberInput 
+              label="Pajak Penghasilan (Bunga)" 
+              placeholder="20" min={0} max={100} hideControls 
+              value={newBankTaxRate} 
+              onChange={(val) => setNewBankTaxRate(val === '' ? '' : Number(val))} 
+              rightSection={<Text size="xs" c="dimmed">%</Text>} 
+              withAsterisk 
+              error={bankErrors.taxRate} 
+            />
+          </Group>
 
           <Divider my="sm" variant="dashed" />
           

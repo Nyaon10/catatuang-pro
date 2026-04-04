@@ -32,7 +32,7 @@ export default function TransactionsPage() {
   const [currentPage, setCurrentPage] = useState(1);
 
   // ========================================================
-  // MESIN OTOMATISASI BUNGA PROGRESIF (AUTO-SYNC)
+  // MESIN OTOMATISASI BUNGA PROGRESIF & PAJAK (AUTO-SYNC)
   // ========================================================
   const runAutoInterestPayout = () => {
     const today = new Date();
@@ -55,18 +55,21 @@ export default function TransactionsPage() {
     const currentMonthKey = `${currentYear}-${currentMonth + 1}`; 
     const currentMonthPadded = String(currentMonth + 1).padStart(2, '0');
     const forcedTransactionDate = `${currentYear}-${currentMonthPadded}-28`;
+    const monthYearStr = `${currentMonthPadded}/${currentYear}`; // Format MM/YYYY
 
     const payoutCutoffThisMonth = new Date(currentYear, currentMonth, 28, 23, 59, 59).getTime();
 
     let isUpdated = false;
-    let addedCount = 0;
-    let totalInterestAdded = 0;
+    let addedAccountsCount = 0;
+    let totalNetInterestAdded = 0;
     let newTransactions = [...currentTrx];
     let newAccounts = [...currentAccounts];
 
     newAccounts.forEach((acc, index) => {
+      // Lewati jika bulan ini sudah pernah dapat bunga
       if (acc.lastInterestMonth === currentMonthKey) return; 
 
+      // Lewati jika akun baru dibuat setelah tgl 28 bulan ini
       if (acc.id > 10000 && acc.id > payoutCutoffThisMonth) {
         newAccounts[index].lastInterestMonth = currentMonthKey; 
         isUpdated = true; 
@@ -78,7 +81,7 @@ export default function TransactionsPage() {
 
       let calculatedInterest = 0;
       if (bank.tiers && bank.tiers.length > 0) {
-        const sortedTiers = [...bank.tiers].sort((a, b) => Number(a.minBalance) - Number(b.minBalance));
+        const sortedTiers = [...bank.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
         
         for (let i = 0; i < sortedTiers.length; i++) {
           const tier = sortedTiers[i];
@@ -105,20 +108,26 @@ export default function TransactionsPage() {
         calculatedInterest = acc.balance * effectiveRate;
       }
 
-      calculatedInterest = Math.floor(calculatedInterest);
+      // Hitung Bunga Kotor, Pajak, dan Bunga Bersih
+      const gross = Math.floor(calculatedInterest);
+      if (gross > 0) {
+        const taxRate = bank.taxRate ?? 20; // Default pajak 20%
+        const taxAmount = Math.floor(gross * (taxRate / 100));
+        const net = gross - taxAmount;
 
-      if (calculatedInterest > 0) {
-        newAccounts[index].balance += calculatedInterest;
+        newAccounts[index].balance += net; // Tambahkan bersihnya ke saldo
         newAccounts[index].lastInterestMonth = currentMonthKey; 
 
-        const trxId = Date.now() + Math.random(); 
+        const trxBaseId = Date.now() + Math.random(); 
+
+        // 1. Transaksi Jurnal: Pemasukan Bunga Kotor
         newTransactions.push({
-          id: trxId,
+          id: trxBaseId,
           date: forcedTransactionDate,
-          desc: `Pendapatan Bunga Otomatis - ${bank.name}`,
-          amount: calculatedInterest,
+          desc: `Bunga Bulanan ${monthYearStr} - ${bank.name} (Otomatis)`,
+          amount: gross,
           isDoubleEntry: true,
-          debitId: acc.id,
+          debitId: acc.id, // Debit dompet = Saldo bertambah
           debitName: acc.name,
           debitOwner: acc.owner,
           creditId: 'MANUAL',
@@ -126,9 +135,24 @@ export default function TransactionsPage() {
           creditOwner: 'Global/Eksternal'
         });
 
+        // 2. Transaksi Jurnal: Pengeluaran Pajak Bunga
+        newTransactions.push({
+          id: trxBaseId + 1,
+          date: forcedTransactionDate,
+          desc: `Pajak Bunga ${monthYearStr} - ${bank.name} (Otomatis)`,
+          amount: taxAmount,
+          isDoubleEntry: true,
+          debitId: 'MANUAL',
+          debitName: 'Beban Pajak Bunga (Sistem)',
+          debitOwner: 'Global/Eksternal',
+          creditId: acc.id, // Kredit dompet = Saldo berkurang
+          creditName: acc.name,
+          creditOwner: acc.owner
+        });
+
         isUpdated = true;
-        addedCount++;
-        totalInterestAdded += calculatedInterest;
+        addedAccountsCount++;
+        totalNetInterestAdded += net;
       }
     });
 
@@ -138,8 +162,8 @@ export default function TransactionsPage() {
       setAccounts(newAccounts);
       setTransactions(newTransactions);
       
-      if (addedCount > 0) {
-        setAutoSyncData({ count: addedCount, total: totalInterestAdded });
+      if (addedAccountsCount > 0) {
+        setAutoSyncData({ count: addedAccountsCount, total: totalNetInterestAdded });
       }
     } 
   };
@@ -308,7 +332,7 @@ export default function TransactionsPage() {
         <Alert icon={<IconCoin size={20} />} color="teal" variant="light" mb="md" style={{ border: '1px solid var(--mantine-color-teal-4)' }}>
           <Text fw={700}>Otomatisasi Berhasil!</Text>
           <Text size="sm">
-            Sistem mendeteksi jadwal pembagian bunga. Total <b>Rp {autoSyncData.total.toLocaleString('id-ID')}</b> telah ditambahkan secara otomatis ke <b>{autoSyncData.count} dompet</b> Anda dan dicatat di tabel Jurnal Umum di bawah ini.
+            Sistem mendeteksi jadwal pembagian bunga. Total bunga bersih sebesar <b>Rp {autoSyncData.total.toLocaleString('id-ID')}</b> telah ditambahkan secara otomatis ke <b>{autoSyncData.count} dompet</b>. Histori penerimaan bunga dan potongan pajak dicatat di tabel di bawah ini.
           </Text>
         </Alert>
       )}
