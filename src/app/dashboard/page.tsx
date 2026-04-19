@@ -49,26 +49,24 @@ export default function DashboardPage() {
           const bank = masterBanks.find((b: any) => b.name === acc.bankName);
           if (!bank || acc.balance <= 0) return;
 
-          let calculatedInterest = 0;
+          // LOGIKA BARU: Tiering Absolut (Seluruh saldo pakai 1 rate tertinggi)
+          let activeRate = 0;
           if (bank.tiers && bank.tiers.length > 0) {
-            const sortedTiers = [...bank.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
-            for (let i = 0; i < sortedTiers.length; i++) {
-              const tier = sortedTiers[i];
-              const min = Number(tier.minBalance);
-              const max = tier.maxBalance === '' ? Infinity : Number(tier.maxBalance);
-              const rate = Number(tier.rate) / 100;
-              const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
-
-              if (acc.balance > min) {
-                const chunk = Math.min(acc.balance, max) - min;
-                calculatedInterest += chunk * effectiveRate;
-              }
+            // Urutkan tier dari batas saldo TERTINGGI ke TERENDAH
+            const sortedTiers = [...bank.tiers].sort((a: any, b: any) => Number(b.minBalance) - Number(a.minBalance));
+            // Cari tier pertama yang memenuhi syarat
+            const matchedTier = sortedTiers.find((t: any) => acc.balance >= Number(t.minBalance));
+            
+            if (matchedTier) {
+              activeRate = Number(matchedTier.rate);
             }
           } else {
-            const rate = (bank.interestRate || 0) / 100;
-            const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
-            calculatedInterest = acc.balance * effectiveRate;
+            activeRate = bank.interestRate || 0;
           }
+
+          const ratePercentage = activeRate / 100;
+          const effectiveRate = bank.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+          const calculatedInterest = acc.balance * effectiveRate;
 
           const gross = Math.floor(calculatedInterest);
           if (gross > 0) {

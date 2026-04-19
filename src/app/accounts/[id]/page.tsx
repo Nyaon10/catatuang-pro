@@ -27,39 +27,31 @@ export default function AccountDetailPage() {
 
   // FUNGSI PERHITUNGAN BUNGA (Dipisah agar bisa dipakai di dalam useEffect)
   const computeInterestData = (balance: number, bankData: any) => {
-    if (!bankData) return { gross: 0, tax: 0, net: 0, taxRate: 0 };
+    if (!bankData || balance <= 0) return { gross: 0, tax: 0, net: 0, taxRate: 0 };
     
-    let totalInterest = 0;
+    let activeRate = 0;
 
+    // LOGIKA BARU: Tiering Absolut (Seluruh saldo pakai 1 rate tertinggi)
     if (bankData.tiers && bankData.tiers.length > 0) {
-      const sortedTiers = [...bankData.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
-
-      for (let i = 0; i < sortedTiers.length; i++) {
-        const tier = sortedTiers[i];
-        const min = Number(tier.minBalance);
-        
-        let max;
-        if (i + 1 < sortedTiers.length) {
-          max = Number(sortedTiers[i + 1].minBalance);
-        } else {
-          max = tier.maxBalance === '' ? Infinity : Number(tier.maxBalance); 
-        }
-
-        const ratePercentage = Number(tier.rate) / 100;
-        const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
-
-        if (balance > min) {
-          const chunkEnd = Math.min(balance, max);
-          const chunkSize = chunkEnd - min;
-          totalInterest += chunkSize * effectiveRate;
-        }
+      // Urutkan tier dari batas saldo TERTINGGI ke TERENDAH
+      const sortedTiers = [...bankData.tiers].sort((a: any, b: any) => Number(b.minBalance) - Number(a.minBalance));
+      
+      // Cari tier pertama yang memenuhi syarat (karena berurut dari besar, ini pasti tier terbaiknya)
+      const matchedTier = sortedTiers.find((t: any) => balance >= Number(t.minBalance));
+      
+      if (matchedTier) {
+        activeRate = Number(matchedTier.rate);
       }
     } else {
-      const ratePercentage = (bankData.interestRate || 0) / 100;
-      const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
-      totalInterest = balance * effectiveRate;
+      activeRate = bankData.interestRate || 0;
     }
 
+    // Hitung Bunga
+    const ratePercentage = activeRate / 100;
+    const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+    const totalInterest = balance * effectiveRate;
+
+    // Hitung Pajak & Bersih
     const gross = Math.floor(totalInterest);
     const taxRate = bankData.taxRate ?? 20; 
     const taxAmount = Math.floor(gross * (taxRate / 100));
