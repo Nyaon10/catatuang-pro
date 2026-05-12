@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Title, Group, Button, Paper, Text, Table, Badge, Center, Loader, Modal, Stack, Alert, Image as MantineImage, Tooltip, Divider } from '@mantine/core';
+import { Title, Group, Button, Paper, Text, Table, Badge, Center, Loader, Modal, Stack, Alert, Image as MantineImage, Tooltip, Divider, NumberInput } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconBuildingBank, IconCoin, IconPhoto, IconCheck } from '@tabler/icons-react';
+import { IconBuildingBank, IconCoin, IconPhoto, IconCheck, IconInfoCircle } from '@tabler/icons-react';
 
 export default function AccountDetailPage() {
   const params = useParams();
@@ -20,40 +20,79 @@ export default function AccountDetailPage() {
   // State Modals
   const [warningOpened, { open: openWarning, close: closeWarning }] = useDisclosure(false);
   const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
+  const [taxModalOpened, { open: openTaxModal, close: closeTaxModal }] = useDisclosure(false);
+  const [taxAmount, setTaxAmount] = useState<number | ''>('');
   
   // STATE UNTUK PREVIEW GAMBAR
   const [imageModalOpened, { open: openImageModal, close: closeImageModal }] = useDisclosure(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-  // FUNGSI PERHITUNGAN BUNGA (Dipisah agar bisa dipakai di dalam useEffect)
+  // =========================================================================
+  // FUNGSI PERHITUNGAN BUNGA (HYBRID: Flat = Harian, Progresif = Pukul Rata)
+  // =========================================================================
   const computeInterestData = (balance: number, bankData: any) => {
     if (!bankData || balance <= 0) return { gross: 0, tax: 0, net: 0, taxRate: 0 };
     
-    let activeRate = 0;
+    let totalInterest = 0;
+    const taxRate = bankData.taxRate ?? 20;
 
-    // LOGIKA BARU: Tiering Absolut (Seluruh saldo pakai 1 rate tertinggi)
+    // Hitung jumlah hari aktual (Dari tgl 28 bulan lalu ke 28 bulan ini)
+    const today = new Date();
+    const prevMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 28);
+    const thisMonthDate = new Date(today.getFullYear(), today.getMonth(), 28);
+    const diffTime = Math.abs(thisMonthDate.getTime() - prevMonthDate.getTime());
+    const daysInCycle = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
     if (bankData.tiers && bankData.tiers.length > 0) {
-      // Urutkan tier dari batas saldo TERTINGGI ke TERENDAH
-      const sortedTiers = [...bankData.tiers].sort((a: any, b: any) => Number(b.minBalance) - Number(a.minBalance));
-      
-      // Cari tier pertama yang memenuhi syarat (karena berurut dari besar, ini pasti tier terbaiknya)
-      const matchedTier = sortedTiers.find((t: any) => balance >= Number(t.minBalance));
-      
-      if (matchedTier) {
-        activeRate = Number(matchedTier.rate);
+      const sortedTiers = [...bankData.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
+
+      if (bankData.tieringType === 'FLAT') {
+        // --- LOGIKA FLAT ABSOLUT (Sistem Bunga Harian 365) ---
+        let activeRate = 0;
+        const reversedTiers = [...sortedTiers].reverse();
+        const matchedTier = reversedTiers.find((t: any) => balance >= Number(t.minBalance));
+        if (matchedTier) activeRate = Number(matchedTier.rate);
+
+        const ratePercentage = activeRate / 100;
+        const effectiveRate = bankData.interestPeriod === 'YEAR' 
+          ? (ratePercentage / 365) * daysInCycle 
+          : ratePercentage; 
+          
+        totalInterest = balance * effectiveRate;
+
+      } else {
+        // --- LOGIKA PROGRESIF / IRISAN (Sistem Bulanan / 12) ---
+        for (let i = 0; i < sortedTiers.length; i++) {
+          const tier = sortedTiers[i];
+          const min = Number(tier.minBalance);
+          let max = (i + 1 < sortedTiers.length) 
+                    ? Number(sortedTiers[i + 1].minBalance) 
+                    : (tier.maxBalance === '' ? Infinity : Number(tier.maxBalance));
+
+          const ratePercentage = Number(tier.rate) / 100;
+          const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+
+          if (balance > min) {
+            const chunkEnd = Math.min(balance, max);
+            const chunkSize = chunkEnd - min;
+            totalInterest += chunkSize * effectiveRate;
+          }
+        }
       }
     } else {
-      activeRate = bankData.interestRate || 0;
+      // --- LOGIKA SINGLE TIER ---
+      const ratePercentage = (bankData.interestRate || 0) / 100;
+      
+      if (bankData.tieringType === 'FLAT') {
+        const effectiveRate = bankData.interestPeriod === 'YEAR' ? (ratePercentage / 365) * daysInCycle : ratePercentage;
+        totalInterest = balance * effectiveRate;
+      } else {
+        const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+        totalInterest = balance * effectiveRate;
+      }
     }
 
-    // Hitung Bunga
-    const ratePercentage = activeRate / 100;
-    const effectiveRate = bankData.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
-    const totalInterest = balance * effectiveRate;
-
-    // Hitung Pajak & Bersih
     const gross = Math.floor(totalInterest);
-    const taxRate = bankData.taxRate ?? 20; 
     const taxAmount = Math.floor(gross * (taxRate / 100));
     const net = gross - taxAmount;
 
@@ -94,19 +133,17 @@ export default function AccountDetailPage() {
   }, [accountId]);
 
   // =========================================================================
-  // AUTO-RECORD SYSTEM: Menjalankan pencatatan otomatis di tanggal 28 ke atas
+  // AUTO-RECORD SYSTEM
   // =========================================================================
   useEffect(() => {
     if (isLoading || !account || !bankDetails) return;
 
     const today = new Date();
-    // Cek apakah hari ini tanggal 28 atau lebih (untuk cover kalau user baru buka tgl 29/30)
     if (today.getDate() >= 28) {
       const monthYear = `${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
       const incomeDesc = `Bunga Bulanan ${monthYear} (Otomatis)`;
       const taxDesc = `Pajak Bunga ${monthYear} (Otomatis)`;
 
-      // Cek apakah transaksi bulan ini sudah pernah dicatat
       const isAlreadyRecorded = accountTransactions.some(trx => trx.desc === incomeDesc);
 
       if (!isAlreadyRecorded) {
@@ -116,7 +153,6 @@ export default function AccountDetailPage() {
           const timestamp = Date.now();
           const todayString = today.toISOString().split('T')[0];
 
-          // 1. Buat Transaksi Pemasukan (Bunga Kotor)
           const newIncomeTrx = {
             id: timestamp,
             accountId: account.id,
@@ -127,7 +163,6 @@ export default function AccountDetailPage() {
             isDoubleEntry: false,
           };
 
-          // 2. Buat Transaksi Pengeluaran (Pajak)
           const newTaxTrx = {
             id: timestamp + 1,
             accountId: account.id,
@@ -138,35 +173,32 @@ export default function AccountDetailPage() {
             isDoubleEntry: false,
           };
 
-          // Simpan Transaksi ke LocalStorage
           const savedTrx = localStorage.getItem('finance_transactions_v2');
           const parsedTrx = savedTrx ? JSON.parse(savedTrx) : [];
           const updatedTrxList = [...parsedTrx, newIncomeTrx, newTaxTrx];
           localStorage.setItem('finance_transactions_v2', JSON.stringify(updatedTrxList));
 
-          // Simpan Update Saldo ke LocalStorage Akun
           const savedAcc = localStorage.getItem('finance_accounts_v3');
           let newBalance = account.balance;
           if (savedAcc) {
             const parsedAcc = JSON.parse(savedAcc);
             const accIndex = parsedAcc.findIndex((a: any) => a.id === account.id);
             if (accIndex > -1) {
-              parsedAcc[accIndex].balance += net; // Tambahkan saldo bersih (kotor - pajak)
+              parsedAcc[accIndex].balance += net; 
               newBalance = parsedAcc[accIndex].balance;
             }
             localStorage.setItem('finance_accounts_v3', JSON.stringify(parsedAcc));
           }
 
-          // Update State secara reaktif (Menambahkan : any[] dan : any)
           setAccountTransactions((prev: any[]) => [...prev, newIncomeTrx, newTaxTrx]);
           setAccount((prev: any) => ({ ...prev, balance: newBalance }));
         }
       }
     }
-  }, [isLoading, account?.id]); // Bergantung pada account.id agar tidak infinity loop
+  }, [isLoading, account?.id]); 
 
   // =========================================================================
-  // FUNGSI HAPUS AKUN (Dikembalikan)
+  // FUNGSI HAPUS AKUN & PAJAK MANUAL
   // =========================================================================
   const handleDeleteClick = () => {
     if (account && account.balance > 0) openWarning();
@@ -192,6 +224,51 @@ export default function AccountDetailPage() {
 
     closeConfirm();
     router.push('/accounts');
+  };
+
+  const handleSaveTax = () => {
+    if (!taxAmount || Number(taxAmount) <= 0) return;
+    const amountToDeduct = Number(taxAmount);
+
+    if (amountToDeduct > account.balance) {
+      alert("Potongan pajak tidak boleh melebihi sisa saldo!");
+      return;
+    }
+
+    const newTransactionId = Date.now();
+    const today = new Date().toISOString().split('T')[0];
+
+    const newTransaction = {
+      id: newTransactionId,
+      date: today,
+      desc: `Potongan Pajak Bunga / Admin`,
+      amount: amountToDeduct,
+      isDoubleEntry: true,
+      creditId: account.id,
+      creditName: account.name,
+      creditOwner: account.owner,
+      debitId: 'MANUAL',
+      debitName: 'Beban Pajak Bunga (Sistem)',
+      debitOwner: 'Global/Eksternal',
+    };
+
+    const savedTransactions = localStorage.getItem('finance_transactions_v2');
+    const existingTransactions = savedTransactions ? JSON.parse(savedTransactions) : [];
+    localStorage.setItem('finance_transactions_v2', JSON.stringify([...existingTransactions, newTransaction]));
+
+    const savedAccounts = localStorage.getItem('finance_accounts_v3');
+    if (savedAccounts) {
+      const parsedAccounts = JSON.parse(savedAccounts);
+      const updatedAccounts = parsedAccounts.map((acc: any) => {
+        if (acc.id === account.id) return { ...acc, balance: acc.balance - amountToDeduct };
+        return acc;
+      });
+      localStorage.setItem('finance_accounts_v3', JSON.stringify(updatedAccounts));
+    }
+
+    closeTaxModal();
+    setTaxAmount('');
+    window.location.reload(); 
   };
 
   const calculateInterest = () => {
@@ -241,9 +318,10 @@ export default function AccountDetailPage() {
               <Badge color="gray" variant="light" leftSection={<IconBuildingBank size={12}/>}>
                 {account.bankName || 'Tidak Ada Bank'}
               </Badge>
+              {/* PERBAIKAN BADGE: Membaca TieringType secara langsung */}
               {bankDetails && (
-                <Badge color="teal" variant="dot">
-                  {bankDetails.tiers && bankDetails.tiers.length > 1 ? 'Bunga Progresif' : 'Bunga Tetap'}
+                <Badge color={bankDetails.tieringType === 'FLAT' ? 'grape' : 'teal'} variant="dot">
+                  {bankDetails.tieringType === 'FLAT' ? 'Bunga Flat Absolut' : 'Bunga Progresif'}
                 </Badge>
               )}
             </Group>
@@ -303,7 +381,7 @@ export default function AccountDetailPage() {
         <Title order={4}>Riwayat Transaksi</Title>
         <Group>
           <Button color="red" variant="outline" size="sm" onClick={handleDeleteClick}>Hapus Akun</Button>
-
+          <Button color="orange" size="sm" onClick={openTaxModal}>- Catat Pajak/Admin</Button>
           <Button color="green" size="sm" onClick={() => router.push(`/accounts/${accountId}/add-transaction`)}>
             + Catat Transaksi
           </Button>
@@ -350,9 +428,7 @@ export default function AccountDetailPage() {
                     {trx.image ? (
                       <Tooltip label="Lihat Bukti Foto">
                         <Button 
-                          variant="light" 
-                          size="xs" 
-                          color="blue"
+                          variant="light" size="xs" color="blue"
                           leftSection={<IconPhoto size={14} />}
                           onClick={() => {
                             setSelectedImage(trx.image);
@@ -375,13 +451,22 @@ export default function AccountDetailPage() {
         )}
       </Paper>
 
-      {/* MODAL UNTUK MELIHAT GAMBAR BUKTI */}
       <Modal opened={imageModalOpened} onClose={closeImageModal} title={<Text fw={700}>Bukti Transaksi</Text>} centered size="lg">
         {selectedImage ? (
           <MantineImage src={selectedImage} alt="Bukti Transaksi" fit="contain" radius="md" />
         ) : (
           <Text c="dimmed" ta="center">Gambar tidak tersedia</Text>
         )}
+      </Modal>
+
+      <Modal opened={taxModalOpened} onClose={closeTaxModal} title={<Text fw={700} size="lg">Catat Potongan Pajak Bunga</Text>} centered>
+        <Stack>
+          <Alert icon={<IconInfoCircle size={16}/>} color="blue" variant="light" style={{ border: 'none' }}>
+            <Text size="xs">Masukkan nominal pajak (PPh) atau biaya admin bulanan sesuai mutasi bank Anda agar saldo di aplikasi ini sama persis (<em>balance</em>) dengan saldo asli Anda.</Text>
+          </Alert>
+          <NumberInput label="Nominal Pajak / Potongan" placeholder="Contoh: 1550" min={0} hideControls prefix="Rp " thousandSeparator="." decimalSeparator="," value={taxAmount} onChange={(val) => setTaxAmount(val === '' ? '' : Number(val))} data-autofocus required />
+          <Button color="orange" onClick={handleSaveTax} fullWidth mt="md">Simpan Potongan</Button>
+        </Stack>
       </Modal>
 
       <Modal opened={warningOpened} onClose={closeWarning} title={<Text fw={700} c="red">Tidak Dapat Menghapus Akun</Text>} centered>

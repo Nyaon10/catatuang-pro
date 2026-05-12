@@ -29,6 +29,7 @@ interface Bank {
   interestRate?: number; 
   tiers?: InterestTier[];
   taxRate?: number; // <--- PERBAIKAN: Tambahan kolom pajak
+  tieringType?: 'PROGRESSIVE' | 'FLAT'; // <--- FITUR BARU: Model Perhitungan Bunga
 }
 
 export default function MastersPage() {
@@ -74,12 +75,16 @@ export default function MastersPage() {
   
   // STATE BARU: Pajak Bunga (Default 20%)
   const [newBankTaxRate, setNewBankTaxRate] = useState<number | ''>(20);
+
+  // STATE BARU: Tipe Tiering (Default Progresif)
+  const [newTieringType, setNewTieringType] = useState<string | null>('PROGRESSIVE');
   
   const [bankTiers, setBankTiers] = useState<InterestTier[]>([
     { id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: 0 }
   ]);
 
-  const [bankErrors, setBankErrors] = useState({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
+  // Tambahkan tieringType ke state error
+  const [bankErrors, setBankErrors] = useState({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '', tieringType: '' });
 
   useEffect(() => {
     const savedOwners = localStorage.getItem('finance_master_owners');
@@ -95,7 +100,9 @@ export default function MastersPage() {
   }, []);
 
   useEffect(() => { setOwnerErrors({ name: '', email: '', phone: '' }); }, [newOwnerName, newOwnerEmail, newOwnerPhone]);
-  useEffect(() => { setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' }); }, [newBaseBankName, newProductName, newBankInterestPeriod, newBankTaxRate, bankTiers]);
+  
+  // Tambahkan newTieringType ke dependensi agar error ter-reset saat diubah
+  useEffect(() => { setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '', tieringType: '' }); }, [newBaseBankName, newProductName, newBankInterestPeriod, newBankTaxRate, bankTiers, newTieringType]);
 
   // ==========================================
   // FUNGSI CRUD MASTER PEMILIK
@@ -203,8 +210,9 @@ export default function MastersPage() {
     setNewProductName('');
     setNewBankInterestPeriod('YEAR');
     setNewBankTaxRate(20); // Reset ke 20%
+    setNewTieringType('PROGRESSIVE'); // Reset ke Progresif
     setBankTiers([{ id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: 0 }]); 
-    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
+    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '', tieringType: '' });
     openBank();
   };
 
@@ -215,6 +223,7 @@ export default function MastersPage() {
     setNewProductName(bank.productName || bank.name.split(' - ')[1] || 'Standar');
     setNewBankInterestPeriod(bank.interestPeriod || 'YEAR');
     setNewBankTaxRate(bank.taxRate ?? 20); // Load pajak sebelumnya, jika tidak ada default 20%
+    setNewTieringType(bank.tieringType || 'PROGRESSIVE'); // Load tiering, jika tidak ada default PROGRESSIVE
     
     if (bank.tiers && bank.tiers.length > 0) {
       setBankTiers(bank.tiers);
@@ -222,7 +231,7 @@ export default function MastersPage() {
       setBankTiers([{ id: Date.now().toString(), minBalance: 0, maxBalance: '', rate: bank.interestRate || 0 }]);
     }
     
-    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' });
+    setBankErrors({ baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '', tieringType: '' });
     openBank();
   };
 
@@ -243,7 +252,7 @@ export default function MastersPage() {
     const trimmedBaseName = newBaseBankName.trim();
     const trimmedProductName = newProductName.trim();
     const combinedName = `${trimmedBaseName} - ${trimmedProductName}`;
-    const errors = { baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '' };
+    const errors = { baseName: '', productName: '', interestPeriod: '', taxRate: '', tiers: '', tieringType: '' };
     let hasError = false;
 
     if (!trimmedBaseName) { errors.baseName = 'Nama Bank Induk wajib diisi!'; hasError = true; }
@@ -253,6 +262,7 @@ export default function MastersPage() {
     if (isDuplicate) { errors.productName = `Produk "${combinedName}" sudah terdaftar!`; hasError = true; }
     if (!newBankInterestPeriod) { errors.interestPeriod = 'Pilih periode bunga!'; hasError = true; }
     if (newBankTaxRate === '') { errors.taxRate = 'Pajak wajib diisi (isi 0 jika bebas pajak)'; hasError = true; }
+    if (!newTieringType) { errors.tieringType = 'Pilih model perhitungan tiering!'; hasError = true; }
 
     const hasInvalidTier = bankTiers.some(t => t.rate === '' || t.minBalance === '');
     if (hasInvalidTier) {
@@ -275,6 +285,7 @@ export default function MastersPage() {
               name: combinedName, baseBankName: trimmedBaseName, productName: trimmedProductName,
               interestPeriod: newBankInterestPeriod as 'YEAR' | 'MONTH',
               taxRate: newBankTaxRate as number,
+              tieringType: newTieringType as 'PROGRESSIVE' | 'FLAT', // Simpan model
               tiers: bankTiers,
               interestRate: bankTiers[0].rate as number 
             }
@@ -295,6 +306,7 @@ export default function MastersPage() {
         id: Date.now().toString(), name: combinedName, baseBankName: trimmedBaseName, productName: trimmedProductName,
         interestPeriod: newBankInterestPeriod as 'YEAR' | 'MONTH',
         taxRate: newBankTaxRate as number,
+        tieringType: newTieringType as 'PROGRESSIVE' | 'FLAT', // Simpan model
         tiers: bankTiers, interestRate: bankTiers[0].rate as number
       };
       updatedBanks = [...banks, newBank];
@@ -392,7 +404,7 @@ export default function MastersPage() {
             </Group>
 
             <MantineAlert icon={<IconInfoCircle size="1rem" />} color="blue" variant="light" mb="md" style={{ border: 'none' }}>
-              <Text size="sm">Sekarang Anda bisa menambahkan <b>Bunga Progresif (Sistem Tier)</b> beserta <b>Pajak Bunga</b> untuk akurasi perhitungan.</Text>
+              <Text size="sm">Pilih Model Tiering yang tepat (<b>Progresif/Irisan</b> seperti Jenius Flexi Saver, atau <b>Flat Absolut</b> seperti Deposito Bank Jago).</Text>
             </MantineAlert>
             
             <div style={{ overflowX: 'auto' }}>
@@ -424,6 +436,9 @@ export default function MastersPage() {
                             <Stack gap={4}>
                               <Group gap="xs">
                                 <Text size="xs" fw={700} c="blue">{bank.tiers.length} Tingkat Bunga ({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'}):</Text>
+                                <Badge color={bank.tieringType === 'FLAT' ? 'grape' : 'orange'} variant="filled" size="xs">
+                                  Model: {bank.tieringType === 'FLAT' ? 'Flat Absolut' : 'Progresif'}
+                                </Badge>
                                 <Badge color="red" variant="light" size="xs">Pajak: {bank.taxRate ?? 20}%</Badge>
                               </Group>
                               {bank.tiers.map((t, i) => (
@@ -437,6 +452,10 @@ export default function MastersPage() {
                               <Text size="sm" fw={600}>
                                 {bank.tiers ? bank.tiers[0]?.rate : bank.interestRate}% <Text component="span" size="xs" c="dimmed" fw={500}>({bank.interestPeriod === 'MONTH' ? 'Per Bulan' : 'Per Tahun'})</Text>
                               </Text>
+                              {/* PERBAIKAN: Menampilkan Badge Model untuk Single Tier juga */}
+                              <Badge color={bank.tieringType === 'FLAT' ? 'grape' : 'orange'} variant="filled" size="xs">
+                                Model: {bank.tieringType === 'FLAT' ? 'Flat Absolut' : 'Progresif'}
+                              </Badge>
                               <Badge color="red" variant="light" size="xs">Pajak: {bank.taxRate ?? 20}%</Badge>
                             </Group>
                           )}
@@ -504,6 +523,17 @@ export default function MastersPage() {
           
           <Group grow align="flex-start">
             <Select label="Hitungan Bunga Berlaku" data={[{ value: 'YEAR', label: 'Per Tahun (p.a.)' }, { value: 'MONTH', label: 'Per Bulan (p.m.)' }]} value={newBankInterestPeriod} onChange={setNewBankInterestPeriod} withAsterisk error={bankErrors.interestPeriod} />
+            <Select 
+              label="Model Perhitungan Tiering" 
+              data={[
+                { value: 'PROGRESSIVE', label: 'Progresif / Irisan' }, 
+                { value: 'FLAT', label: 'Flat Absolut' }
+              ]} 
+              value={newTieringType} 
+              onChange={setNewTieringType} 
+              withAsterisk 
+              error={bankErrors.tieringType} 
+            />
             <NumberInput 
               label="Pajak Penghasilan (Bunga)" 
               placeholder="20" min={0} max={100} hideControls 

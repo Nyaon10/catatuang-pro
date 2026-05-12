@@ -2,9 +2,10 @@
 
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Title, Paper, Table, Text, Group, TextInput, Pagination, Center, Loader, Badge, Button, Tabs, Select, SimpleGrid, useComputedColorScheme, Alert } from '@mantine/core';
-import { IconDownload, IconCoin } from '@tabler/icons-react';
+import { Title, Paper, Table, Text, Group, TextInput, Pagination, Center, Loader, Badge, Button, Tabs, Select, SimpleGrid, useComputedColorScheme, Alert, ActionIcon, Modal, Image as MantineImage } from '@mantine/core';
+import { IconDownload, IconBolt, IconCoin, IconPhoto } from '@tabler/icons-react';
 import { useRouter } from 'next/navigation';
+import { useDisclosure } from '@mantine/hooks';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -31,14 +32,16 @@ export default function TransactionsPage() {
   const [internalAccount, setInternalAccount] = useState<string | null>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
 
+  // State Viewer Gambar
+  const [imageModalOpened, { open: openImageModal, close: closeImageModal }] = useDisclosure(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
   // ========================================================
-  // MESIN OTOMATISASI BUNGA PROGRESIF & PAJAK (AUTO-SYNC)
+  // MESIN OTOMATISASI PENGEKSEKUSI BUNGA HYBRID
   // ========================================================
-  const runAutoInterestPayout = () => {
+  const runAutoInterestPayout = (forceExecute = false) => {
     const today = new Date();
-    
-    // Hanya berjalan jika hari ini adalah tanggal 28 atau lebih
-    if (today.getDate() < 28) return;
+    if (!forceExecute && today.getDate() < 28) return;
 
     const rawAccounts = localStorage.getItem('finance_accounts_v3');
     const rawBanks = localStorage.getItem('finance_master_banks');
@@ -55,21 +58,24 @@ export default function TransactionsPage() {
     const currentMonthKey = `${currentYear}-${currentMonth + 1}`; 
     const currentMonthPadded = String(currentMonth + 1).padStart(2, '0');
     const forcedTransactionDate = `${currentYear}-${currentMonthPadded}-28`;
-    const monthYearStr = `${currentMonthPadded}/${currentYear}`; // Format MM/YYYY
 
     const payoutCutoffThisMonth = new Date(currentYear, currentMonth, 28, 23, 59, 59).getTime();
 
+    // Hitung jumlah hari aktual (Dari tgl 28 bulan lalu ke 28 bulan ini) untuk model Flat
+    const prevMonthDate = new Date(currentYear, currentMonth - 1, 28);
+    const thisMonthDate = new Date(currentYear, currentMonth, 28);
+    const diffTime = Math.abs(thisMonthDate.getTime() - prevMonthDate.getTime());
+    const daysInCycle = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
     let isUpdated = false;
-    let addedAccountsCount = 0;
-    let totalNetInterestAdded = 0;
+    let addedCount = 0;
+    let totalInterestAdded = 0;
     let newTransactions = [...currentTrx];
     let newAccounts = [...currentAccounts];
 
     newAccounts.forEach((acc, index) => {
-      // Lewati jika bulan ini sudah pernah dapat bunga
       if (acc.lastInterestMonth === currentMonthKey) return; 
 
-      // Lewati jika akun baru dibuat setelah tgl 28 bulan ini
       if (acc.id > 10000 && acc.id > payoutCutoffThisMonth) {
         newAccounts[index].lastInterestMonth = currentMonthKey; 
         isUpdated = true; 
@@ -80,54 +86,79 @@ export default function TransactionsPage() {
       if (!bank || acc.balance <= 0) return;
 
       let calculatedInterest = 0;
+      
+      // =============================================================
+      // LOGIKA KEDUA MODEL (HYBRID: FLAT = Harian, PROGRESIF = Bulanan)
+      // =============================================================
       if (bank.tiers && bank.tiers.length > 0) {
-        const sortedTiers = [...bank.tiers].sort((a: any, b: any) => Number(a.minBalance) - Number(b.minBalance));
+        const sortedTiers = [...bank.tiers].sort((a, b) => Number(a.minBalance) - Number(b.minBalance));
         
-        for (let i = 0; i < sortedTiers.length; i++) {
-          const tier = sortedTiers[i];
-          const min = Number(tier.minBalance);
-          
-          let max;
-          if (i + 1 < sortedTiers.length) {
-            max = Number(sortedTiers[i + 1].minBalance);
-          } else {
-            max = tier.maxBalance === '' ? Infinity : Number(tier.maxBalance);
-          }
+        if (bank.tieringType === 'FLAT') {
+          // --- LOGIKA FLAT ABSOLUT (Sistem Bunga Harian 365) ---
+          let activeRate = 0;
+          const reversedTiers = [...sortedTiers].reverse();
+          const matchedTier = reversedTiers.find((t: any) => acc.balance >= Number(t.minBalance));
+          if (matchedTier) activeRate = Number(matchedTier.rate);
 
-          const rate = Number(tier.rate) / 100;
-          const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
+          const ratePercentage = activeRate / 100;
+          const effectiveRate = bank.interestPeriod === 'YEAR' ? (ratePercentage / 365) * daysInCycle : ratePercentage;
+          calculatedInterest = acc.balance * effectiveRate;
 
-          if (acc.balance > min) {
-            const chunk = Math.min(acc.balance, max) - min;
-            calculatedInterest += chunk * effectiveRate;
+        } else {
+          // --- LOGIKA PROGRESIF / IRISAN (Sistem Bulanan / 12) ---
+          for (let i = 0; i < sortedTiers.length; i++) {
+            const tier = sortedTiers[i];
+            const min = Number(tier.minBalance);
+            let max = (i + 1 < sortedTiers.length) 
+                      ? Number(sortedTiers[i + 1].minBalance) 
+                      : (tier.maxBalance === '' ? Infinity : Number(tier.maxBalance));
+
+            const ratePercentage = Number(tier.rate) / 100;
+            const effectiveRate = bank.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+
+            if (acc.balance > min) {
+              const chunkEnd = Math.min(acc.balance, max);
+              const chunkSize = chunkEnd - min;
+              calculatedInterest += chunkSize * effectiveRate;
+            }
           }
         }
       } else {
-        const rate = (bank.interestRate || 0) / 100;
-        const effectiveRate = bank.interestPeriod === 'YEAR' ? rate / 12 : rate;
-        calculatedInterest = acc.balance * effectiveRate;
+        // --- LOGIKA SINGLE TIER ---
+        const ratePercentage = (bank.interestRate || 0) / 100;
+        if (bank.tieringType === 'FLAT') {
+          const effectiveRate = bank.interestPeriod === 'YEAR' ? (ratePercentage / 365) * daysInCycle : ratePercentage;
+          calculatedInterest = acc.balance * effectiveRate;
+        } else {
+          const effectiveRate = bank.interestPeriod === 'YEAR' ? ratePercentage / 12 : ratePercentage;
+          calculatedInterest = acc.balance * effectiveRate;
+        }
       }
 
-      // Hitung Bunga Kotor, Pajak, dan Bunga Bersih
+      // Hitung Pajak sebelum dibulatkan untuk dimasukkan ke jurnal
+      const taxRate = bank.taxRate ?? 20;
       const gross = Math.floor(calculatedInterest);
-      if (gross > 0) {
-        const taxRate = bank.taxRate ?? 20; // Default pajak 20%
-        const taxAmount = Math.floor(gross * (taxRate / 100));
-        const net = gross - taxAmount;
+      const taxAmount = Math.floor(gross * (taxRate / 100));
+      const net = gross - taxAmount;
 
-        newAccounts[index].balance += net; // Tambahkan bersihnya ke saldo
+      if (gross > 0) {
+        newAccounts[index].balance += net; // Masuk saldo bersih
         newAccounts[index].lastInterestMonth = currentMonthKey; 
 
-        const trxBaseId = Date.now() + Math.random(); 
+        const trxId = Date.now() + Math.random(); 
+        const taxTrxId = Date.now() + Math.random() + 1;
+        
+        const monthYear = `${currentMonthPadded}/${currentYear}`;
 
-        // 1. Transaksi Jurnal: Pemasukan Bunga Kotor
+        // 1. Jurnal Bunga Kotor
         newTransactions.push({
-          id: trxBaseId,
+          id: trxId,
           date: forcedTransactionDate,
-          desc: `Bunga Bulanan ${monthYearStr} - ${bank.name} (Otomatis)`,
+          desc: `Bunga Bulanan ${monthYear} (Otomatis) - ${bank.name}`,
           amount: gross,
+          type: 'INCOME',
           isDoubleEntry: true,
-          debitId: acc.id, // Debit dompet = Saldo bertambah
+          debitId: acc.id,
           debitName: acc.name,
           debitOwner: acc.owner,
           creditId: 'MANUAL',
@@ -135,24 +166,25 @@ export default function TransactionsPage() {
           creditOwner: 'Global/Eksternal'
         });
 
-        // 2. Transaksi Jurnal: Pengeluaran Pajak Bunga
+        // 2. Jurnal Pajak Bunga
         newTransactions.push({
-          id: trxBaseId + 1,
+          id: taxTrxId,
           date: forcedTransactionDate,
-          desc: `Pajak Bunga ${monthYearStr} - ${bank.name} (Otomatis)`,
+          desc: `Pajak Bunga ${monthYear} (Otomatis) - ${bank.name}`,
           amount: taxAmount,
+          type: 'EXPENSE',
           isDoubleEntry: true,
+          creditId: acc.id,
+          creditName: acc.name,
+          creditOwner: acc.owner,
           debitId: 'MANUAL',
           debitName: 'Beban Pajak Bunga (Sistem)',
-          debitOwner: 'Global/Eksternal',
-          creditId: acc.id, // Kredit dompet = Saldo berkurang
-          creditName: acc.name,
-          creditOwner: acc.owner
+          debitOwner: 'Global/Eksternal'
         });
 
         isUpdated = true;
-        addedAccountsCount++;
-        totalNetInterestAdded += net;
+        addedCount++;
+        totalInterestAdded += net; 
       }
     });
 
@@ -162,14 +194,16 @@ export default function TransactionsPage() {
       setAccounts(newAccounts);
       setTransactions(newTransactions);
       
-      if (addedAccountsCount > 0) {
-        setAutoSyncData({ count: addedAccountsCount, total: totalNetInterestAdded });
+      if (addedCount > 0) {
+        setAutoSyncData({ count: addedCount, total: totalInterestAdded });
       }
-    } 
+    } else if (forceExecute) {
+      alert("Simulasi Selesai: Tidak ada bunga yang bisa dibagikan.\n\nAlasan:\n- Saldo masih Rp 0\n- Saldo masih berada di Tier 0%\n- Bulan ini sudah diklaim\n- Akun dibuat lewat tgl 28");
+    }
   };
 
   useEffect(() => {
-    runAutoInterestPayout();
+    runAutoInterestPayout(false);
 
     const savedTransactions = localStorage.getItem('finance_transactions_v2');
     if (savedTransactions) setTransactions(JSON.parse(savedTransactions));
@@ -219,7 +253,8 @@ export default function TransactionsPage() {
       return {
         id: trx.id, date: trx.date, desc: trx.desc,
         debitAcc: trx.debitName, debitOwner: trx.debitOwner,
-        creditAcc: trx.creditName, creditOwner: trx.creditOwner, amount: trx.amount
+        creditAcc: trx.creditName, creditOwner: trx.creditOwner, amount: trx.amount,
+        image: trx.image
       };
     }
     const accountDetail = getAccountDetails(trx.accountId);
@@ -227,13 +262,15 @@ export default function TransactionsPage() {
       return {
         id: trx.id, date: trx.date, desc: trx.desc || 'Tanpa Keterangan',
         debitAcc: accountDetail.name, debitOwner: accountDetail.owner,
-        creditAcc: 'Pendapatan / Modal (Otomatis)', creditOwner: 'MANUAL', amount: trx.amount
+        creditAcc: 'Pendapatan / Modal (Otomatis)', creditOwner: 'MANUAL', amount: trx.amount,
+        image: trx.image
       };
     } else {
       return {
         id: trx.id, date: trx.date, desc: trx.desc || 'Tanpa Keterangan',
         debitAcc: 'Beban / Pengeluaran (Otomatis)', debitOwner: 'MANUAL',
-        creditAcc: accountDetail.name, creditOwner: accountDetail.owner, amount: trx.amount
+        creditAcc: accountDetail.name, creditOwner: accountDetail.owner, amount: trx.amount,
+        image: trx.image
       };
     }
   });
@@ -323,16 +360,21 @@ export default function TransactionsPage() {
     <DashboardLayout>
       <Group justify="space-between" mb="lg">
         <Title order={2}>Jurnal Umum</Title>
-        <Button color="green" onClick={() => router.push('/transactions/add')}>
-          + Tambah Jurnal Baru
-        </Button>
+        <Group>
+          <Button color="orange" variant="light" leftSection={<IconBolt size={18} />} onClick={() => runAutoInterestPayout(true)}>
+            Simulasi Tgl 28 (Bagi Bunga)
+          </Button>
+          <Button color="green" onClick={() => router.push('/transactions/add')}>
+            + Tambah Jurnal Baru
+          </Button>
+        </Group>
       </Group>
 
       {autoSyncData && (
         <Alert icon={<IconCoin size={20} />} color="teal" variant="light" mb="md" style={{ border: '1px solid var(--mantine-color-teal-4)' }}>
           <Text fw={700}>Otomatisasi Berhasil!</Text>
           <Text size="sm">
-            Sistem mendeteksi jadwal pembagian bunga. Total bunga bersih sebesar <b>Rp {autoSyncData.total.toLocaleString('id-ID')}</b> telah ditambahkan secara otomatis ke <b>{autoSyncData.count} dompet</b>. Histori penerimaan bunga dan potongan pajak dicatat di tabel di bawah ini.
+            Sistem mendeteksi jadwal pembagian bunga. Total <b>Rp {autoSyncData.total.toLocaleString('id-ID')}</b> telah ditambahkan secara otomatis ke <b>{autoSyncData.count} dompet</b> Anda dan dicatat di tabel Jurnal Umum di bawah ini.
           </Text>
         </Alert>
       )}
@@ -389,6 +431,7 @@ export default function TransactionsPage() {
                   <Table.Tr bg={isDark ? 'dark.6' : 'gray.1'}>
                     <Table.Th w={120}>Tanggal</Table.Th>
                     <Table.Th>Keterangan / Nama Akun</Table.Th>
+                    <Table.Th style={{ textAlign: 'center' }} w={80}>Bukti</Table.Th>
                     <Table.Th style={{ textAlign: 'right' }} w={180}>Debit (Rp)</Table.Th>
                     <Table.Th style={{ textAlign: 'right' }} w={180}>Kredit (Rp)</Table.Th>
                   </Table.Tr>
@@ -406,6 +449,14 @@ export default function TransactionsPage() {
                             </Badge>
                           )}
                         </Table.Td>
+                        {/* KOLOM BUKTI GAMBAR */}
+                        <Table.Td rowSpan={2} style={{ verticalAlign: 'middle', textAlign: 'center' }}>
+                          {journal.image ? (
+                             <ActionIcon color="blue" variant="light" onClick={() => { setSelectedImage(journal.image); openImageModal(); }}>
+                               <IconPhoto size={18} />
+                             </ActionIcon>
+                          ) : <Text size="xs" c="dimmed">-</Text>}
+                        </Table.Td>
                         <Table.Td style={{ textAlign: 'right', fontWeight: 600 }}>{journal.amount.toLocaleString('id-ID')}</Table.Td>
                         <Table.Td></Table.Td>
                       </Table.Tr>
@@ -422,7 +473,7 @@ export default function TransactionsPage() {
                         <Table.Td style={{ textAlign: 'right', fontWeight: 600 }}>{journal.amount.toLocaleString('id-ID')}</Table.Td>
                       </Table.Tr>
                       <Table.Tr bg="transparent">
-                        <Table.Td colSpan={4} pb="sm">
+                        <Table.Td colSpan={5} pb="sm">
                           <Text size="xs" c={journal.desc.includes('Otomatis') ? 'teal.6' : 'dimmed'} fw={journal.desc.includes('Otomatis') ? 600 : 400}>
                             ({journal.desc})
                           </Text>
@@ -443,6 +494,16 @@ export default function TransactionsPage() {
           <Text c="dimmed" fs="italic" ta="center" py="xl">Jurnal Umum kosong atau tidak ada yang sesuai filter.</Text>
         )}
       </Paper>
+
+      {/* MODAL VIEWER GAMBAR */}
+      <Modal opened={imageModalOpened} onClose={closeImageModal} title={<Text fw={700}>Bukti Jurnal / Transaksi</Text>} centered size="lg">
+        {selectedImage ? (
+          <MantineImage src={selectedImage} alt="Bukti Transaksi" fit="contain" radius="md" />
+        ) : (
+          <Text c="dimmed" ta="center">Gambar tidak tersedia</Text>
+        )}
+      </Modal>
+
     </DashboardLayout>
   );
 }
