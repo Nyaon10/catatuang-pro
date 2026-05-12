@@ -8,14 +8,9 @@ export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const expiry = localStorage.getItem('session_expiry');
-    const now = Date.now();
-
-    if (expiry && now < parseInt(expiry)) {
-      router.push('/dashboard');
-    } else {
-      router.push('/login');
-    }
+    // Karena Middleware sudah memastikan hanya user dengan JWT yang bisa ke sini,
+    // kita tidak perlu cek localStorage lagi. Langsung masuk ke Dashboard!
+    router.push('/dashboard');
   }, [router]);
 
   return (

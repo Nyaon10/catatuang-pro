@@ -1,6 +1,5 @@
 'use client';
 
-// PERBAIKAN: Menambahkan useState dan useEffect
 import { useState, useEffect } from 'react';
 import { AppShell, Burger, Group, NavLink, Text, ThemeIcon, ScrollArea, ActionIcon, useMantineColorScheme, useComputedColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -12,19 +11,22 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // State untuk menghindari Hydration Error
   const [mounted, setMounted] = useState(false);
-
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
 
-  // Beritahu React bahwa komponen sudah aman dimuat di browser
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const handleLogout = () => {
-    router.push('/');
+  // PERBAIKAN: Fungsi Logout sekarang menghapus Cookie JWT via API
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+    } catch (error) {
+      console.error('Gagal logout', error);
+    }
   };
 
   return (
@@ -52,7 +54,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             aria-label="Ganti tema"
             radius="md"
           >
-            {/* PERBAIKAN: Gunakan status "mounted" agar server dan client sinkron */}
             {mounted && computedColorScheme === 'dark' ? (
               <IconSun size="1.2rem" stroke={1.5} color="var(--mantine-color-yellow-4)" />
             ) : (
